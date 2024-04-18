@@ -1,0 +1,26 @@
+#!/usr/bin/env Rscript
+args = commandArgs(trailingOnly=TRUE)
+
+library('DESeq2')
+library("IHW")
+
+counts <- read.delim("All_counts.txt_Gene-counts.txt", row.names = 1, header=TRUE)
+counts <- as.matrix(counts)
+condition <- factor(c(rep("Wt", 4), rep("FHV",4), rep("DI", 4)))
+coldata <- data.frame(row.names=colnames(counts), condition)
+dds <- DESeqDataSetFromMatrix(countData=counts, colData=coldata, design=~condition)
+dds <- DESeq(dds, fitType="local")
+
+
+res <- results(dds, contrast = c("condition","FHV","Wt"), filterFun=ihw)
+resdata <- merge(as.data.frame(res), as.data.frame(counts(dds, normalized=TRUE))[c(1:4,5:8)], by="row.names", sort=FALSE)
+names(resdata)[1] <- "Gene"
+Outfile = paste("Wt-vs-FHV_Gene_DESeq2-results.csv", sep="")
+write.csv(resdata, file=Outfile)
+
+
+res <- results(dds, contrast = c("condition","DI","Wt"), filterFun=ihw)
+resdata <- merge(as.data.frame(res), as.data.frame(counts(dds, normalized=TRUE))[c(1:4,9:12)], by="row.names", sort=FALSE)
+names(resdata)[1] <- "Gene"
+Outfile = paste("Wt-vs-DI_Gene_DESeq2-results.csv", sep="")
+write.csv(resdata, file=Outfile)

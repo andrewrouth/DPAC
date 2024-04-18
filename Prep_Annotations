@@ -1,0 +1,46 @@
+#!/bin/bash
+
+usage="DPAC_Subscript for Annotation Preparation:
+        Written by Andrew Routh, 2019
+
+USAGE: ./Prep_Annotations_File [OPTIONS] EXONS DSEXONS NAMES OUTPUT
+
+"
+
+while getopts 'h' option; do
+  case "$option" in
+    h ) echo "$usage"
+       exit
+       ;;
+   \? ) printf "unrecognised option: -%s\n" "$OPTARG" >&2
+       echo "$usage" >&2
+       exit 1
+       ;;
+  esac
+
+done
+shift $((OPTIND -1))
+
+##REQUIRED INPUT
+EXONS=$1
+DSEXONS=$2
+NAMES=$3
+OUTPUT=$4
+WKDIR=$0
+ScriptPath=${WKDIR%/*}'/Scripts/'
+
+#sort -k1,1 -k2,2n dm6_wholegene.bed > dm6_wholegene.sorted.bed
+#bedtools merge -s -c 4,4 -o distinct,count -i dm6_wholegene.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > dm6_wholegene.merge.bed
+
+cat $EXONS $DSEXONS > TEMP_Exons-DS200.bed
+sort -k1,1 -k2,2n TEMP_Exons-DS200.bed > TEMP_Exons-DS200.sort.bed
+python3 $ScriptPath'Fix_Accessions.py' TEMP_Exons-DS200.sort.bed TEMP_Exons-DS200.fix.bed $NAMES
+sort -u -k1,1 -k2,2n -k3,3n TEMP_Exons-DS200.fix.bed > TEMP_Exons-DS200.fix.sort.bed
+bedtools merge -s -c 4,4 -o distinct,count -i TEMP_Exons-DS200.fix.sort.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > TEMP_Exons-DS200.fix.sort.merge.bed
+python3 $ScriptPath'MakeIntrons.py' TEMP_Exons-DS200.fix.sort.merge.bed $OUTPUT
+
+rm TEMP_Exons-DS200.bed
+rm TEMP_Exons-DS200.fix.bed
+rm TEMP_Exons-DS200.fix.sort.bed
+rm TEMP_Exons-DS200.fix.sort.merge.bed
+rm TEMP_Exons-DS200.sort.bed

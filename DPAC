@@ -1,0 +1,363 @@
+#!/bin/bash
+
+usage="DPAC: Differential Poly(A) Cluster analysis
+        Written by Andrew Routh, Nathan Elrod, 2018-2020
+
+USAGE: ./DPAC [OPTIONS] MetaDataFile INDEX PASCLUSTER OUTPUTROOT
+
+e.g. ./DPAC MetaData.txt /data/Indexes/HISAT2/hg19/hg19 hg19_HeLa_PACs.bed Testoutput
+
+Required Arguments:
+    MetaDataFile                (MetaFAta file containing root names, conditions and raw data path. 
+                                 See help file for required format)
+    Index                       (HISAT index e.g.  /data/Indexes/HISAT2/hg19/hg19)
+    Poly(A) Cluster Database    (Name of existing Poly(A) cluster database.
+                                 Or output name if making new cluster: requires annotation and names list)
+    Output Root Names           (String for output files; e.g Wt-vs-KD. No whitespace)
+
+Optional Arguments:
+    -h show this help text
+
+    -p Perform custom stages; select combination of P, M, R, C, D. No whitespace, e.g. 'CD'.
+            (default = PMD: Preprocess, map and Differential Poly(A) Cluster analysis)
+        P Only perform data preprocessing
+        M Only map data
+        B Make individual Bedgraphs
+            Requires -g GENOME (default = off).
+        R Rename existing poly(A) cluster annotations to compatible format for DPAC (e.g. polyA_DB)
+            Requires -x Annotation and -y Names (see manual)
+        C force new PAS cluster generation (default = off). 
+            Requires -g Genome, -x Annotation and -y Names (see manual). 
+        D Only perform Differential Poly(A) Cluster and Alternative Polyadenylation (APA) analysis 
+
+        
+    -t set threads (default: 1)
+    -s Use STAR aligner (default: Hisat2 alignment). 
+    -a set number of A's required in poly(A) tail (default: 25; minimum is 10)
+    -r set number of reads required per poly(A) event  (default: 5)
+    -l set minimum read length required after adaptor and poly(A) trimming (default: 40)
+    -c perform reverse-complementation of reads prior to poly(A)-tail detection/trimmming (e.g. for 3'READS) (default: OFF)
+    -d set directory with raw read data, if not already present in Meta.Data.txt
+    -o set distance allowed for read mapping upstream of Poly(A) Cluster (default: 10)
+    -n set number of replicates in experiment  (default: 3)
+    -i set to include intronic PACs in calculation of APA in final report (does not affect other steps; -m also recommended if -i selected)
+    -m Provide file corresponding to Repeat Masker Database. This will exclude PACs overlapping with repetitive elements (e.g. Alu).
+    -v Enter organism and database used if links wanted in final output. Must be in format: [organism,database] e.g. -v mouse,mm10 or -v human,hg19
+
+Arguments to force new PAS cluster generation
+    -g Genome, required for new cluster generation 
+        (Genome in fasta format e.g.  /data/Indexes/HISAT2/hg19/hg19.fa)
+    -x Annotations, required for new cluster generation 
+        (Downloaded in bed format for specific genome from UCSC - see manual)
+    -y Gene Names, required for new cluster generation  
+        (Downloaded from UCSC - see manual)
+    -w Cluster Window within which adjacent poly(A)-sites (PASs) are merged to generate a single poly(A)-Cluster (PAC) (default: 25).
+
+    "
+##OPTIONAL INPUT
+STAGING='PMD'
+THREADS=1
+ALIGNER='Hisat2'
+REQAs=25
+REQReads=5
+READLEN=40
+UMI='NO'
+REVCOMP=''
+INTRONS=''
+READDIR=''
+ANNOTATIONS=''
+NAMES=''
+GENOME=''
+CLUSTERWINDOW=25
+RMSK=''
+REPLICATES=3
+OVERLAP=10
+SKIPOVERLAP=''
+ORGDB=''
+DRIM='NO'
+
+
+#Remaining options:  befjqtwz
+while getopts 'hcip:t:s:u:za:l:r:d:g:x:y:o:n:m:w:kv:' option; do
+  case "$option" in
+    h ) echo "$usage"
+       exit
+       ;;
+    p ) STAGING=$OPTARG
+       ;;
+    t ) THREADS=$OPTARG
+       ;;
+    s ) ALINGER='Star'
+       ;;
+    u ) UMI=$OPTARG
+       ;;
+    z ) DRIM='YES'
+       ;;
+    a ) REQAs=$OPTARG
+       ;;
+    l ) READLEN=$OPTARG
+       ;;
+    r ) REQReads=$OPTARG
+       ;;
+    c ) REVCOMP='YES'
+       ;;
+    i ) INTRONS='-Introns'
+       ;;
+    d ) READDIR=$OPTARG
+       ;;
+    g ) GENOME=$OPTARG
+       ;;
+    x ) ANNOTATIONS=$OPTARG
+       ;;
+    y ) NAMES=$OPTARG
+       ;;
+    w ) CLUSTERWINDOW=$OPTARG
+       ;;
+    m ) RMSK=$OPTARG
+       ;;
+    n ) REPLICATES=$OPTARG
+       ;;
+    o ) OVERLAP=$OPTARG
+       ;;
+    k ) SKIPOVERLAP='YES'
+       ;;
+    v ) ORGDB=$OPTARG
+       ;;
+
+
+   \? ) printf "unrecognised option: -%s\n" "$OPTARG" >&2
+       echo "$usage" >&2
+       exit 1
+       ;;
+  esac
+done
+shift $((OPTIND -1))
+
+##REQUIRED INPUT
+METADATA=$1
+INDEX=$2
+PACS=$3
+OUTPUTNAME=$4
+WKDIR=$0
+ScriptPath=${WKDIR%/*}'/Scripts/'
+
+if [[ "$STAGING" == *"P"* ]]; then
+    sed 1d $METADATA | while read line; do
+        read Root Treatment Rawdata Comment <<< $line;
+        echo "###########################################"
+        echo $Root
+        echo $Rawdata
+        Rawdata=$READDIR$Rawdata
+        ##Process Raw Data
+        echo "Prepping raw data" $Rawdata
+        if [[ "$UMI" == 'NO' ]]; then
+            fastp -i $Rawdata -a AGATCGGAAGAGC -g -l $READLEN -h $Root'_trim-report.html' -w $THREADS -Q -o $Root'_temp_trim.fastq.gz'
+        else
+            fastp -i $Rawdata -a AGATCGGAAGAGC -U --umi_loc read1 --umi_len $UMI --umi_prefix umi -g -l $READLEN -h $Root'_trim-report.html' -w $THREADS -Q -o $Root'_temp_trim.fastq.gz'
+        fi
+	if [[ "$REVCOMP" == 'YES' ]]; then
+		echo 'Reverse-complementing Reads...'
+		gunzip -dc $Root'_temp_trim.fastq.gz' | fastx_reverse_complement -Q33 -z -o $Root'_temp_trim_RC.fastq.gz'
+		cutadapt -b A{15} -n 2 -O 10 -m $READLEN -j $THREADS --discard-untrimmed $Root'_temp_trim_RC.fastq.gz' -o $Root'_temp_out.fastq.gz'
+	        python3 $ScriptPath'Extract_pA_Lens.py' $Root'_temp_trim_RC.fastq.gz' $Root'_temp_out.fastq.gz' $Root'_prep.fastq.gz'
+	        rm $Root'_temp_trim_RC.fastq.gz'
+	else
+        	cutadapt -b A{15} -n 2 -O 10 -m $READLEN -j $THREADS --discard-untrimmed $Root'_temp_trim.fastq.gz' -o $Root'_temp_out.fastq.gz'
+	        python3 $ScriptPath'Extract_pA_Lens.py' $Root'_temp_trim.fastq.gz' $Root'_temp_out.fastq.gz' $Root'_prep.fastq.gz'
+	fi
+        rm $Root'_temp_out.fastq.gz'
+        rm $Root'_temp_trim.fastq.gz'
+    done
+fi
+
+##Map with HiSat2
+if [[ "$STAGING" == *"M"* ]]; then
+    sed 1d $METADATA | while read line; do
+        read Root Treatment Rawdata Comment <<< $line;
+        echo "#########################################"
+        if [[ "$ALINGER" == "Star" ]]; then
+            echo 'Mapping $Root with Star aligner'
+            STAR 'runThreadN='$THREADs runMode=alignReads 'genomeDir='$INDEX genomeLoad=LoadAndKeep 'readFilesIn='$Root'_prep.fastq.gz' outStd=SAM |
+                samtools view -buSh - | samtools sort -@ $THREADS - -o $Root'_Star-mapping.bam'
+        else
+            echo 'Mapping '$Root' with hisat2'
+            hisat2 -p $THREADS -x $INDEX -U $Root'_prep.fastq.gz' | samtools view -buSh - | samtools sort -@ $THREADS - -o $Root'_Hisat2-mapping.bam'
+        fi
+        samtools index $Root'_'$ALIGNER'-mapping.bam'
+        if [[ ! "$UMI" == 'NO' ]]; then
+            echo 'Deduping data using UMI'
+            umi_tools dedup -I $Root'_'$ALIGNER'-mapping.bam' -S $Root'_dedup_'$ALIGNER'-mapping.bam'
+            samtools index $Root'_dedup_'$ALIGNER'-mapping.bam'
+        fi
+    done
+fi
+
+##Correct ALIGNER if UMIs
+if [[ ! "$UMI" == 'NO' ]]; then
+        ALIGNER='dedup_'$ALIGNER
+fi
+
+##Make individual PAS bedgraphs
+if [[ "$STAGING" == *"B"* ]] && [[ ! $GENOME == '' ]]; then
+    sed 1d $METADATA | while read line; do
+        read Root Treatment Rawdata Comment <<< $line;
+        echo "###########################################"
+        echo 'Making poly(A) bedgraph files for '$Root
+        echo "###########################################"
+        echo "Making individualised begraph for "$Root
+        Header='track type=bedGraph name="'$Root'" description="'$Treatment'" alwaysZero=on visibility=2 color=255,153,0'
+        echo $Header > $Root'_'$ALIGNER'-coverage.bedgraph'
+        bedtools genomecov -split -ibam $Root'_'$ALIGNER'-mapping.bam' -bg >> $Root'_'$ALIGNER'-coverage.bedgraph'
+        python3 $ScriptPath'MakeBEDGraph_pALenAr.py' $Root'_'$ALIGNER'-mapping.bam' --Description $Root'_'$Treatment
+        k=$(($REQAs * $REQReads))
+        grep '+' $Root'_'$ALIGNER'-mapping.bam.bedgraph' > $Root'_temp'
+        awk -v vari=$REQReads -v varj=$k '{OFS="\t"};{if($4>=vari && $6>=varj)print $1, $2, $3, $4}' $Root'_temp' > $Root'_temp2'
+        sort -k1,1 -k2,2n $Root'_temp2' > $Root'_temp'
+        header='track type=bedGraph name="'$Root'_'$Treatment'_C'$REQReads'_A'$REQAs'_F" description="'$Root'_'$Treatment'_C'$REQReads'_A'$REQAs'_F" alwaysZero=on'
+        echo $header | cat - $Root'_temp' > $Root'_prep.f.bedgraph'
+        Events=$(grep -c [0-9] $Root'_prep.f.bedgraph')
+        Reads=$(awk '{s+=$4}END{print s}' $Root'_prep.f.bedgraph')
+        echo 'Number of Events and Reads = ' $Events ' and ' $Reads ' in forward strand'
+        grep '-' $Root'_'$ALIGNER'-mapping.bam.bedgraph' > $Root'_temp'
+        awk -v vari=$REQReads -v varj=$k '{OFS="\t"};{if($4>=vari && $6>=varj)print $1, $2, $3, $4}' $Root'_temp' > $Root'_temp2'
+        sort -k1,1 -k2,2n $Root'_temp2' > $Root'_temp'
+        header='track type=bedGraph name="'$Root'_'$Treatment'_C'$REQReads'_A'$REQAs'_R" description="'$Root'_'$Treatment'_C'$REQReads'_A'$REQAs'_R" alwaysZero=on'
+        echo $header | cat - $Root'_temp' > $Root'_prep.r.bedgraph'
+        Events=$(grep -c [0-9] $Root'_prep.r.bedgraph')
+        Reads=$(awk '{s+=$4}END{print s}' $Root'_prep.r.bedgraph')
+        echo 'Number of Events and Reads = ' $Events ' and ' $Reads ' in reverse strand'
+        rm $Root'_temp'
+        rm $Root'_temp2'
+    done
+fi
+
+##Rename Clusters
+if [[ "$STAGING" == *"R"* ]]; then
+    if [[ ! $ANNOTATIONS == '' ]] && [[ ! $NAMES == '' ]]; then
+        echo "#############################################"
+        echo "Fixing BED names of alternative poly(A) database"
+        intersectBed -wao -s -a $PACS -b $ANNOTATIONS | sort -u -k1,1 -k2,2n | awk '{OFS="\t"}{print $1, $2, $3, $12, $5, $6, $7, $8}' > All_PACs.sorted.bed
+        sed 's/end/end_0/g' All_PACs.sorted.bed > All_PACs.sorted2.bed
+        python3 $ScriptPath'Fix_BEDnames.py' All_PACs.sorted2.bed All_PACs.final.unsort.bed $NAMES
+        header='track name="All_PACseq" description="All_PACSeq_Poly(A)-Clusters" visibility=pack colorByStrand="255,0,0 0,0,255"'
+        echo $header > $OUTPUTNAME'_PACs.bed'
+        sort -k1,1 -k2,2n All_PACs.final.unsort.bed >> $OUTPUTNAME'_PACs.bed'
+        PACS=$OUTPUTNAME'_PACs.bed'
+    
+        rm All_PACs.final.unsort.bed
+        rm All_PACs.sorted.bed
+        rm All_PACs.sorted2.bed
+    else
+        echo "Alternative PAS Cluster Database generation selected, but not all files were provided.
+              Require -x ANNOTATION and -y NAMES
+              See manual for details.
+              Exiting..."
+        exit 1
+    fi
+fi
+
+##New Clusters
+if [[ "$STAGING" == *"C"* ]]; then
+    if [[ ! $ANNOTATIONS == '' ]] && [[ ! $NAMES == '' ]] && [[ ! $GENOME == '' ]]; then
+
+        echo "#############################################"
+        echo "Combining all data and generating poly(A) dataset"
+        k=$(($REQAs * $REQReads))
+        python3 $ScriptPath'MakeBEDGraph_pALenAr_fromMeta.py' $METADATA --Description "All_PACSeq" --MinScore $k --MinCount $REQReads --ReqAs $REQAs
+    
+        echo "Filtering Internally primed PASs"
+        ##Forward
+        python3 $ScriptPath'PAS_Clustering.py' All_PACSeq_combined-PASs.f.bedgraph All_PASs F $GENOME
+        sort -k1,1 -k2,2n UNNAMED_All_PASs > UNNAMED_All_PASs.sorted.bed
+        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > UNNAMED_All_PACs.merged.bed
+        intersectBed -wao -s -a UNNAMED_All_PACs.merged.bed -b $ANNOTATIONS | sort -u -k1,1 -k2,2n | awk '{OFS="\t"}{print $1, $2, $3, $10, $5, $6}' > All_PACs.bed
+        
+        ##Reverse
+        python3 $ScriptPath'PAS_Clustering.py' All_PACSeq_combined-PASs.r.bedgraph All_PASs R $GENOME
+        sort -k1,1 -k2,2n UNNAMED_All_PASs > UNNAMED_All_PASs.sorted.bed
+        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > UNNAMED_All_PACs.merged.bed 
+        intersectBed -wao -s -a UNNAMED_All_PACs.merged.bed -b $ANNOTATIONS | sort -u -k1,1 -k2,2n | awk '{OFS="\t"}{print $1, $2, $3, $10, $5, $6}' >> All_PACs.bed
+        
+        echo "Fixing BED names"
+        sort -k1,1 -k2,2n All_PACs.bed > All_PACs.sorted.bed
+        sed 's/_end/_end_0/g' All_PACs.sorted.bed > All_PACs.sorted2.bed
+        python3 $ScriptPath'Fix_BEDnames.py' All_PACs.sorted2.bed All_PACs.final.unsort.bed $NAMES
+        header='track name="All_PACseq" description="All_PACSeq_Poly(A)-Clusters" visibility=pack colorByStrand="255,0,0 0,0,255"'
+        echo $header > $OUTPUTNAME'_PACs.bed'
+        sort -k1,1 -k2,2n All_PACs.final.unsort.bed >> $OUTPUTNAME'_PACs.bed'
+        PACS=$OUTPUTNAME'_PACs.bed'
+    
+        rm UNNAMED_All_PASs
+        rm UNNAMED_All_PACs.merged.bed
+        rm UNNAMED_All_PASs.sorted.bed
+        rm All_PACSeq_combined-PASs.f.bedgraph
+        rm All_PACSeq_combined-PASs.r.bedgraph
+        rm All_PACs.final.unsort.bed
+        rm All_PACs.bed
+        rm All_PACs.sorted.bed
+        rm All_PACs.sorted2.bed
+    else
+        echo "PAS Cluster generation selected, but not all files were provide.
+              Require -g GENOME -x ANNOTATION and -y NAMES
+              See manual for details.
+              Exiting..."
+        exit 1
+    fi
+else
+    echo "Using existing PAC database"
+fi
+
+if [[ "$STAGING" == *"D"* ]]; then
+    echo "###########################################"
+    if [[ $SKIPOVERLAP == '' ]]; then
+        echo "Finding data 3' end overlaps with PACs"
+        awk -v vari=$OVERLAP '{OFS="\t"}{if($6=="+")$2-=vari}{if($6=="-")$3+=vari}{print}' $PACS |
+        awk '{OFS="\t"}{if($2<1)$2=1}{print}' |
+        sort -k1,1 -k2,2n > PACs.overlaps.sorted.bed
+        if [[ ! $RMSK == '' ]]; then
+            intersectBed -v -s -a PACs.overlaps.sorted.bed -b $RMSK > PACs.overlaps.sorted.masked.bed
+            mv PACs.overlaps.sorted.masked.bed PACs.overlaps.sorted.bed
+        fi
+        sed 1d $METADATA | while read line; do
+            read Root Treatment Rawdata Comment <<< $line;
+            echo "Ovelapping "$Root
+            samtools index $Root'_'$ALIGNER'-mapping.bam'
+            bedtools genomecov -3 -bg -strand '+' -ibam $Root'_'$ALIGNER'-mapping.bam' | awk '{OFS="\t"}{print $1, $2, $3, $4, "3END", "+"}' >  $Root'_'$ALIGNER'-mapping_3prime-ends.bed'
+            bedtools genomecov -3 -bg -strand '-' -ibam $Root'_'$ALIGNER'-mapping.bam' | awk '{OFS="\t"}{print $1, $2, $3, $4, "3END", "-"}' >>  $Root'_'$ALIGNER'-mapping_3prime-ends.bed'
+            sort -k1,1 -k2,2n $Root'_'$ALIGNER'-mapping_3prime-ends.bed' > $Root'_'$ALIGNER'-mapping_3prime-ends.sorted.bed'
+            intersectBed -s -wb -bed -a $Root'_'$ALIGNER'-mapping_3prime-ends.sorted.bed' -b PACs.overlaps.sorted.bed |
+            awk '{print $1, $2, $3, $4, $10}' > $Root'_PAC_overlaps.txt'
+        done
+    else
+        echo "Skipping Overlap"
+    fi
+    echo "###########################################"
+    echo "Making counts file"
+    python3 $ScriptPath'Make_Gene-Exon-PASs_database.py' $METADATA $OUTPUTNAME $INTRONS
+    
+    echo "Performing DESeq2 analysis"
+    python3 $ScriptPath'GenerateRscript.py' $METADATA $OUTPUTNAME
+    Rscript $OUTPUTNAME'_Rscript.txt' $OUTPUTNAME
+    
+    echo "###########################################"
+    echo "Determining APA"
+    while read COMP; do 
+        echo $COMP;
+        python3 $ScriptPath'GenerateDRIMRscript.py' $COMP $COMP'_'$OUTPUTNAME 
+        if [[ "$DRIM" == 'YES' ]]; then
+            Rscript $COMP'_'$OUTPUTNAME'_DRIMRscript.txt' $COMP'_'$OUTPUTNAME'_PAC-counts_drimseq.txt'
+            if [[ ! $ORGDB == '' ]]; then
+                python3 $ScriptPath'APA_Terminal_Exon.py' $COMP'_'$OUTPUTNAME $COMP'_'$OUTPUTNAME'_APA-report.txt' $PACS $INTRONS --Replicates $REPLICATES -Links --Annos $ANNOTATIONS --db $ORGDB -DRIMSeq
+            else
+                python3 $ScriptPath'APA_Terminal_Exon.py' $COMP'_'$OUTPUTNAME $COMP'_'$OUTPUTNAME'_APA-report.txt' $PACS $INTRONS --Replicates $REPLICATES -DRIMSeq
+            fi
+        else
+            echo "No DRIMSeq"
+            if [[ ! $ORGDB == '' ]]; then
+                python3 $ScriptPath'APA_Terminal_Exon.py' $COMP'_'$OUTPUTNAME $COMP'_'$OUTPUTNAME'_APA-report.txt' $PACS $INTRONS --Replicates $REPLICATES -Links --Annos $ANNOTATIONS --db $ORGDB 
+            else
+                python3 $ScriptPath'APA_Terminal_Exon.py' $COMP'_'$OUTPUTNAME $COMP'_'$OUTPUTNAME'_APA-report.txt' $PACS $INTRONS --Replicates $REPLICATES
+            fi
+        fi
+    done < $OUTPUTNAME'_Comparisons.txt'
+fi
