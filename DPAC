@@ -1,7 +1,7 @@
 #!/bin/bash
 
 usage="DPAC: Differential Poly(A) Cluster analysis
-        Written by Andrew Routh, Nathan Elrod, 2018-2020
+        Written by Andrew Routh, Nathan Elrod, 2018-2024
 
 USAGE: ./DPAC [OPTIONS] MetaDataFile INDEX PASCLUSTER OUTPUTROOT
 
@@ -269,13 +269,13 @@ if [[ "$STAGING" == *"C"* ]]; then
         ##Forward
         python3 $ScriptPath'PAS_Clustering.py' All_PACSeq_combined-PASs.f.bedgraph All_PASs F $GENOME
         sort -k1,1 -k2,2n UNNAMED_All_PASs > UNNAMED_All_PASs.sorted.bed
-        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > UNNAMED_All_PACs.merged.bed
+        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $4, $5, "+"}' > UNNAMED_All_PACs.merged.bed
         intersectBed -wao -s -a UNNAMED_All_PACs.merged.bed -b $ANNOTATIONS | sort -u -k1,1 -k2,2n | awk '{OFS="\t"}{print $1, $2, $3, $10, $5, $6}' > All_PACs.bed
         
         ##Reverse
         python3 $ScriptPath'PAS_Clustering.py' All_PACSeq_combined-PASs.r.bedgraph All_PASs R $GENOME
         sort -k1,1 -k2,2n UNNAMED_All_PASs > UNNAMED_All_PASs.sorted.bed
-        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > UNNAMED_All_PACs.merged.bed 
+        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $4, $5, "-"' > UNNAMED_All_PACs.merged.bed 
         intersectBed -wao -s -a UNNAMED_All_PACs.merged.bed -b $ANNOTATIONS | sort -u -k1,1 -k2,2n | awk '{OFS="\t"}{print $1, $2, $3, $10, $5, $6}' >> All_PACs.bed
         
         echo "Fixing BED names"
