@@ -36,7 +36,9 @@ cat $EXONS $DSEXONS > TEMP_Exons-DS200.bed
 sort -k1,1 -k2,2n TEMP_Exons-DS200.bed > TEMP_Exons-DS200.sort.bed
 python3 $ScriptPath'Fix_Accessions.py' TEMP_Exons-DS200.sort.bed TEMP_Exons-DS200.fix.bed $NAMES
 sort -u -k1,1 -k2,2n -k3,3n TEMP_Exons-DS200.fix.bed > TEMP_Exons-DS200.fix.sort.bed
-bedtools merge -s -c 4,4 -o distinct,count -i TEMP_Exons-DS200.fix.sort.bed | awk '{OFS="\t"}{print $1, $2, $3, $5, $6, $4}' > TEMP_Exons-DS200.fix.sort.merge.bed
+bedtools merge -S + -c 4,4 -o distinct,count -i TEMP_Exons-DS200.fix.sort.bed | awk '{OFS="\t"}{print $1, $2, $3, $4, $5, "+"}' > TEMP_Exons-DS200.fix.sort.merge.bed
+bedtools merge -S - -c 4,4 -o distinct,count -i TEMP_Exons-DS200.fix.sort.bed | awk '{OFS="\t"}{print $1, $2, $3, $4, $5, "-"}' >> TEMP_Exons-DS200.fix.sort.merge.bed
+sort -u -k1,1 -k2,2n -k3,3n TEMP_Exons-DS200.fix.sort.merge.bed > TEMP_Exons-DS200.fix.sort.merge.sort.bed
 python3 $ScriptPath'MakeIntrons.py' TEMP_Exons-DS200.fix.sort.merge.bed $OUTPUT
 
 rm TEMP_Exons-DS200.bed
@@ -44,3 +46,4 @@ rm TEMP_Exons-DS200.fix.bed
 rm TEMP_Exons-DS200.fix.sort.bed
 rm TEMP_Exons-DS200.fix.sort.merge.bed
 rm TEMP_Exons-DS200.sort.bed
+rm TEMP_Exons-DS200.fix.sort.merge.sort.bed
