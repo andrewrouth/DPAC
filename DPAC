@@ -275,7 +275,7 @@ if [[ "$STAGING" == *"C"* ]]; then
         ##Reverse
         python3 $ScriptPath'PAS_Clustering.py' All_PACSeq_combined-PASs.r.bedgraph All_PASs R $GENOME
         sort -k1,1 -k2,2n UNNAMED_All_PASs > UNNAMED_All_PASs.sorted.bed
-        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $4, $5, "-"' > UNNAMED_All_PACs.merged.bed 
+        bedtools merge -d $CLUSTERWINDOW -s -c 4,5 -o sum -i UNNAMED_All_PASs.sorted.bed | awk '{OFS="\t"}{print $1, $2, $3, $4, $5, "-"}' > UNNAMED_All_PACs.merged.bed 
         intersectBed -wao -s -a UNNAMED_All_PACs.merged.bed -b $ANNOTATIONS | sort -u -k1,1 -k2,2n | awk '{OFS="\t"}{print $1, $2, $3, $10, $5, $6}' >> All_PACs.bed
         
         echo "Fixing BED names"
